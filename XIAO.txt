@@ -1,0 +1,32 @@
+XIAO ESP32ピン
+
+GPIO2・・・Vmes
+GPIO3・・・Imes
+GPIO4・・・SETmes
+GPIO5・・・Tsens・・・キャリブレーション無し
+GPIO6・・・OLED SDA
+GPIO7・・・OLED SCL
+GPIO21・・・V/IR・・・起動時にシリアルが出る
+
+GPIO10・・・ONOFF
+GPIO9・・・Onboard button
+GPIO8・・・R/IV・・・プルアップが必要
+GPIO20・・・FANPWM
+
+FANのPWM無し
+
+XIAO RP2040
+GPIO26・・・Tsens
+GPIO27・・・SETmes
+GPIO28・・・Imes
+GPIO29・・・Vmes
+GPIO6・・・OLED SDA
+GPIO7・・・OLED SCL
+GPIO0・・・FAN PWM
+
+GPIO3・・・V/IR
+GPIO4・・・R/IV
+GPIO2・・・ONOFF
+GPIO1・・・FANONOFF
+
+

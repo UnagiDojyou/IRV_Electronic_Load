@@ -37,6 +37,9 @@
 //ADCのサンプリング数
 #define averageN 1000
 
+//FANをONにする温度
+#define FANONTEMP 40
+
 #define SCREEN_WIDTH 128     // OLED display width, in pixels
 #define SCREEN_HEIGHT 64     // OLED display height, in pixels
 #define SCREEN_ADDRESS 0x3C  //0x78のときは0x3C、0x7Aのときは0x3A
@@ -47,6 +50,7 @@
 
 bool ONOFFstatus = false;
 int MODEstatus = Imode;
+bool Fsetup = false;
 
 const float aV = (Vmes_ref2 - Vmes_ref1) / (Vmes_val2 - Vmes_val1);
 const float bV = Vmes_ref1 - (aV * Vmes_val1);
@@ -110,6 +114,25 @@ void setup() {
   }
   openingceremony();
   delay(2000);
+  Fsetup = true;
+}
+
+void setup1() {
+  while (!Fsetup) {
+    delay(10);
+  }
+}
+
+String digit(float num) {
+  char cnum[10];
+  if (num < 10) {
+    sprintf(cnum, "%1.2f", num);
+  } else if (num < 100) {
+    sprintf(cnum, "%2.1f", num);
+  } else {
+    sprintf(cnum, "%d", num);
+  }
+  return cnum;
 }
 
 bool blink = false;
@@ -138,26 +161,26 @@ void drawdisplay(float V, float I, int T, float SET, bool SOAover) {
     }
   }
   //sprintf(buff,);
-  display.print(V);
+  display.print(digit(V));
   display.println("V");
   if (MODEstatus == 0) {
-    display.print("fixI ");
+    display.print("CC   ");
   } else if (MODEstatus == 1) {
-    display.print("fixR ");
+    display.print("CR   ");
   } else {
-    display.print("fixV ");
+    display.print("CV   ");
   }
-  display.print(I);
+  display.print(digit(I));
   display.println("A");
-  display.print(SET);
+  display.print(digit(SET));
   if (MODEstatus == 0) {
     display.print("A");
   } else if (MODEstatus == 1) {
-    display.print("V");
-  } else {
     display.print("R");
+  } else {
+    display.print("V");
   }
-  display.print(W);
+  display.print(digit(W));
   display.println("W");
   display.print("     ");
   display.print(T);
@@ -174,16 +197,16 @@ bool checkSOA(float V, float I) {  //trueでOK falseでOUT
     }
   }
   if (V <= SOA2_V) {
-    float Im = SOA1a * V + SOA1b;
-    if (I <= Im) {  //2つ目の領域
+    float Imax = SOA1a * V + SOA1b;
+    if (I <= Imax) {  //2つ目の領域
       return true;
     } else {
       return false;
     }
   }
   if (V <= SOA3_V) {
-    float Im = SOA2a * V + SOA2b;
-    if (I <= Im) {
+    float Imax = SOA2a * V + SOA2b;
+    if (I <= Imax) {  //3つ目の領域
       return true;
     } else {
       return false;
@@ -192,31 +215,50 @@ bool checkSOA(float V, float I) {  //trueでOK falseでOUT
   return false;
 }
 
+float mespin(int pinnum, int samplingN) {
+  analogRead(pinnum);
+  delay(1);
+  unsigned long sum = 0;
+  for (int i = 0; i < samplingN; i++) {
+    sum += analogRead(pinnum);
+  }
+  float result = sum / samplingN;
+  return result;
+}
+
+bool fanonhold = false;
+bool fanonoff(int temp) {
+  if (temp >= FANONTEMP) {
+    if (ONOFFstatus) {  //ONの時
+      fanonhold = true;
+      return true;
+    } else {  //OFFの時
+      fanonhold = false;
+      return true;
+    }
+  } else {
+    if (!ONOFFstatus) {
+      return false;
+    } else if (fanonhold) {
+      return true;
+    }
+  }
+  return false;
+}
+
 int count = 500;
+bool SOAover = true;
 
 void loop() {
-  unsigned long Vsum = 0;
-  unsigned long Isum = 0;
-  unsigned long SETsum = 0;
-  unsigned long Tsum = 0;
-  for (int i = 0; i < averageN; i++) {
-    Vsum += analogRead(Vmes);
-    Isum += analogRead(Imes);
-    SETsum += analogRead(SETmes);
-    Tsum += analogRead(Tsens);
-  }
-  //Serial.println(a);
-  //Serial.println(b);
-  float V = (aV * (Vsum / averageN)) + bV;
+  float V = (aV * mespin(Vmes, averageN)) + bV;
   if (V < 0) {
     V = 0;
   }
-  float I = (a * (Isum / averageN) + b) / R1;
+  float I = (a * mespin(Imes, averageN) + b) / R1;
   if (I < 0 || !ONOFFstatus) {
     I = 0;
   }
-  float SET = (a * (SETsum / averageN)) + b;
-  //Serial.println(SET);
+  float SET = (a * mespin(SETmes, averageN)) + b;
   if (SET < 0) {
     SET = 0;
   }
@@ -227,9 +269,8 @@ void loop() {
   } else {  //Vmode
     SET = SET * (R4 + R5) / R5;
   }
-  int T = 100 * (a * (Tsum / averageN) + b - 0.5);
+  int T = 100 * (a * mespin(Tsens, averageN) + b - 0.5);
 
-  bool SOAover = true;
   if (ONOFFstatus) {  //ON
     if (!checkSOA(V, I)) {
       digitalWrite(ONOFF, LOW);
@@ -248,9 +289,55 @@ void loop() {
     }
   }
   count++;
-  if (count >= 10 || SOAover) {  //about 500ms
+  if (count >= 1 || SOAover) {  //about 500ms
     drawdisplay(V, I, T, SET, SOAover);
     count = 0;
   }
-  //delay(50);
+  if (fanonoff(T)) {
+    digitalWrite(FANONOFF, HIGH);
+    analogWrite(FANPWM, 4095);  //FAN 100%
+  } else {
+    digitalWrite(FANONOFF, LOW);
+    analogWrite(FANPWM, 0);  //FAN 0%
+  }
+}
+
+void loop1() {
+  if (BOOTSEL) {
+    int time = 0;
+    bool pushed = false;
+    while (BOOTSEL) {
+      delay(10);
+      time += 10;
+      if (!pushed && time >= 4 * 100) {  //4s
+        if (!ONOFFstatus) {
+          if (MODEstatus == 0) {  //Imode
+            MODEstatus = 1;       //Rmode
+            digitalWrite(RIV, HIGH);
+            digitalWrite(VIR, LOW);
+          } else if (MODEstatus == 1) {  //Rmode
+            MODEstatus = 2;              //Vmode
+            digitalWrite(RIV, LOW);
+            digitalWrite(VIR, HIGH);
+          } else {           //Vmode
+            MODEstatus = 0;  //Imode
+            digitalWrite(RIV, LOW);
+            digitalWrite(VIR, LOW);
+          }
+        }
+        pushed = true;
+      }
+    }
+    if (!pushed) {
+      if (!ONOFFstatus && !SOAover) {
+        ONOFFstatus = true;
+        digitalWrite(ONOFF, HIGH);
+      } else if (ONOFFstatus) {
+        digitalWrite(ONOFF, LOW);
+        ONOFFstatus = false;
+      }
+      pushed = true;
+    }
+  }
+  delay(1);
 }

@@ -37,8 +37,13 @@
 //ADCのサンプリング数
 #define averageN 1000
 
-//FANをONにする温度
-#define FANONTEMP 40
+//FAN関係
+#define FANONTEMP 40   //この温度以上でONにする
+#define FANSETTEMP 50  //PID制御での目標値
+#define MINPWM 0.2 //PWMを最小にしたときの回転数の割合(0.2=20%)
+#define KP 1000.0         //比例要素
+#define KI 0.02     //積分要素
+#define KD 1000.0     //微分要素
 
 #define SCREEN_WIDTH 128     // OLED display width, in pixels
 #define SCREEN_HEIGHT 64     // OLED display height, in pixels
@@ -135,8 +140,19 @@ String digit(float num) {
   return cnum;
 }
 
+int digits(int num) {
+  if (num < 10) {
+    return 1;
+  } else if (num < 100) {
+    return 2;
+  } else if (num < 1000) {
+    return 3;
+  }
+  return 4;
+}
+
 bool blink = false;
-void drawdisplay(float V, float I, int T, float SET, bool SOAover) {
+void drawdisplay(float V, float I, int T, float SET, bool SOAover, int fanper) {
   float W = V * I;
   char buff[50];
   sprintf(buff, "V:%2.1f I:%2.1f W:%3.1f T:%d MODE:%d SET:%2.1f", V, I, W, T, MODEstatus, SET);
@@ -182,7 +198,11 @@ void drawdisplay(float V, float I, int T, float SET, bool SOAover) {
   }
   display.print(digit(W));
   display.println("W");
-  display.print("     ");
+  display.print(fanper);
+  display.print("% ");
+  for (int i = 0; i < 3 - digits(fanper); i++) {
+    display.print(" ");
+  }
   display.print(T);
   display.println("C");
   display.display();
@@ -228,16 +248,16 @@ float mespin(int pinnum, int samplingN) {
 
 bool fanonhold = false;
 bool fanonoff(int temp) {
-  if (temp >= FANONTEMP) {
-    if (ONOFFstatus) {  //ONの時
+  if (temp >= FANONTEMP) {  //閾値よりも高い時
+    if (ONOFFstatus) {      //ONの時
       fanonhold = true;
       return true;
     } else {  //OFFの時
       fanonhold = false;
       return true;
     }
-  } else {
-    if (!ONOFFstatus) {
+  } else {  //閾値よりも低い時
+    if (!ONOFFstatus) { //OFFの時
       return false;
     } else if (fanonhold) {
       return true;
@@ -246,22 +266,49 @@ bool fanonoff(int temp) {
   return false;
 }
 
+double integral = 0.0;
+float lastError = 0.0;
+unsigned long lastTime = 0;
+int fanpid(float nowtemp, int settemp) {
+  unsigned long now = millis();
+  float timeChange = (float)(now - lastTime);
+  float error = settemp - nowtemp;
+  integral += (error * timeChange);
+  float derivative = (error - lastError) / timeChange;
+  float output = (KP * error) + (KI * integral) + (KD * derivative);
+  /*Serial.print(output);
+  Serial.print(" ");
+  Serial.print((float)KP * error);
+  Serial.print(" ");
+  Serial.print((float)KI * integral);
+  Serial.print(" ");
+  Serial.print((float)KD * derivative);
+  Serial.print(" ");*/
+  output = 0 - output;
+  if (output > 4095) output = 4095;
+  else if (output < MINPWM * 4095) output = MINPWM * 4095;
+  lastError = error;
+  lastTime = now;
+  if (integral > 100000) integral = 100000;
+  else if (integral < -100000) integral = -100000;
+  //Serial.println((int)output);
+  return (int)output;
+}
+
 int count = 500;
 bool SOAover = true;
-
+float V = 0;
+float I = 0;
+float SET = 0;
+float T = 0;
 void loop() {
-  float V = (aV * mespin(Vmes, averageN)) + bV;
-  if (V < 0) {
-    V = 0;
-  }
-  float I = (a * mespin(Imes, averageN) + b) / R1;
-  if (I < 0 || !ONOFFstatus) {
-    I = 0;
-  }
-  float SET = (a * mespin(SETmes, averageN)) + b;
-  if (SET < 0) {
-    SET = 0;
-  }
+  V = (aV * mespin(Vmes, averageN)) + bV;
+  if (V < 0) V = 0;
+  I = (a * mespin(Imes, averageN) + b) / R1;
+  if (I < 0 || !ONOFFstatus) I = 0;
+
+  SET = (a * mespin(SETmes, averageN)) + b;
+  if (SET < 0) SET = 0;
   if (MODEstatus == 0) {  //Imode
     SET = SET / R1;
   } else if (MODEstatus == 1) {  //Rmode
@@ -269,7 +316,7 @@ void loop() {
   } else {  //Vmode
     SET = SET * (R4 + R5) / R5;
   }
-  int T = 100 * (a * mespin(Tsens, averageN) + b - 0.5);
+  T = 100 * (a * mespin(Tsens, averageN) + b - 0.5);
 
   if (ONOFFstatus) {  //ON
     if (!checkSOA(V, I)) {
@@ -288,17 +335,25 @@ void loop() {
       SOAover = (SET < V);
     }
   }
-  count++;
-  if (count >= 1 || SOAover) {  //about 500ms
-    drawdisplay(V, I, T, SET, SOAover);
-    count = 0;
-  }
+
+  int fanpwm = 0;
   if (fanonoff(T)) {
     digitalWrite(FANONOFF, HIGH);
-    analogWrite(FANPWM, 4095);  //FAN 100%
+    //analogWrite(FANPWM, 4095);  //FAN 100%
+    fanpwm = fanpid(T, FANSETTEMP);
+    analogWrite(FANPWM, fanpwm);
   } else {
     digitalWrite(FANONOFF, LOW);
-    analogWrite(FANPWM, 0);  //FAN 0%
+    //analogWrite(FANPWM, 0);  //FAN 0%
+    integral = 0;
+    lastError = 0;
+    lastTime = 0;
+  }
+
+  count++;
+  if (count >= 1 || SOAover) {  //about 500ms
+    drawdisplay(V, I, (int)T, SET, SOAover, 100.0 * fanpwm / 4095.0);
+    count = 0;
   }
 }
 

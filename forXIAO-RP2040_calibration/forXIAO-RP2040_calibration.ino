@@ -1,17 +1,18 @@
 //IVR Electronic Load
-//ESP32のADCをキャリブレーションする用のスケッチ
+//XIAOのADCをキャリブレーションする用のスケッチ
 //設計した電圧範囲の最大値の0.9倍の値の電圧を加えた時と、0.3倍の値の電圧を加えた時の出力される値をメモしてください。
 
-#define Vmes 29
-#define Imes 28
-#define SETmes 27
-#define Tsens 26
+//ピン割り当て
+#define Vmes 26
+#define Imes 27
+#define SETmes 28
+#define Tsens 29
 #define OLEDSDA 6
 #define OLEDSCL 7
-#define VIR 3
-#define ONOFF 2
-#define RIV 4
 #define FANPWM 0
+#define ONOFF 3
+#define RIV 4
+#define VIR 2
 #define FANONOFF 1
 
 #define averageN 1000
